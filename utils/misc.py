@@ -21,3 +21,4 @@ def mean(ls):
 def print_nparams(model):
 	nparams = sum([param.nelement() for param in model.parameters()])
 	print('number of parameters: %d' % (nparams))
+	return nparams

@@ -24,34 +24,35 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--nepoch', default=350, type=int)
 parser.add_argument('--seed', default=1124, type=int)
+parser.add_argument('--batch_size', default=128, type=int)
 parser.add_argument('--outf', default='demo')
 parser.add_argument('--resume', default=None, help='path to checkpoint')
 args = parser.parse_args()
+my_makedir(args.outf)
 
 print('==> Preparing data..')
-NORM = ((0.4914, 0.4822, 0.4465), (0.2470, 0.2430, 0.2610))     # works a little better
-# NORM = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-trset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transforms.Compose([
+NORM = ((0.4914, 0.4822, 0.4465), (0.2470, 0.2430, 0.2610))
+trset = torchvision.datasets.CIFAR10(root='/home/yu/datasets/', 
+    train=True, download=True, transform=transforms.Compose([
     transforms.RandomCrop(32, padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize(*NORM)]))
 trset, vaset = split_validation(trset, 5000, args.seed)
-trloader = torch.utils.data.DataLoader(trset, batch_size=128, shuffle=True, num_workers=2)
-valoader = torch.utils.data.DataLoader(vaset, batch_size=128, shuffle=False, num_workers=2)
+trloader = torch.utils.data.DataLoader(trset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+valoader = torch.utils.data.DataLoader(vaset, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
-teset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transforms.Compose([
+teset = torchvision.datasets.CIFAR10(root='/home/yu/datasets/',
+    train=False, download=True, transform=transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(*NORM)]))
-teloader = torch.utils.data.DataLoader(teset, batch_size=128, shuffle=False, num_workers=2)
+teloader = torch.utils.data.DataLoader(teset, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
 print('==> Building model..')
-# from models.preact_resnet import *
-# net = PreActResNet18()
-from models.resnet import *
-net = ResNet50()
+from models.preact_resnet import ResNetCifar
+net = ResNetCifar(110, 1)
 net = net.cuda()
-print_nparams(net)
+nparams = print_nparams(net)
 cudnn.benchmark = True
 
 best_err = 1        # best test error
@@ -127,18 +128,21 @@ for epoch in range(start_epoch, start_epoch+args.nepoch):
           '%.2f\t%.3f\t' % (te_err*100, te_loss))
 
     y_tr, _, y_va, _, y_te, _ = zip(*all_loss)
-    torch.save(all_loss, '%s_loss.pth'          % (args.outf))
-    plt.plot(y_te)
-    plt.plot(y_tr)
-    plt.savefig(         '%s_loss.pdf'          % (args.outf))
+    plt.plot(y_te*100, label='test error (%)')
+    plt.plot(y_tr*100, label='training error (%)')
+    plt.legend()
+    plt.savefig(         '%s/loss.pdf'          % (args.outf))
     plt.close()
+    torch.save(all_loss, '%s/loss.pth'          % (args.outf))
 
     if epoch > 300:
         # if done for all epochs, I/O takes too much time
         if va_err < best_err:
             print('Saving..')
-            state = {   'net': net.state_dict(),
-                        'va_err': va_err,
-                        'epoch': epoch}
-            torch.save(state, args.outf + '_ckpt.pth')
+            state = {'tr_err': tr_err, 'va_err': va_err, 'te_err': te_err,
+                    'tr_loss': tr_loss, 'va_loss': va_loss, 'te_loss': te_loss,
+                    'epoch': epoch, 'nparams': nparams}
+            torch.save(state, args.outf + '/ckpt_info.pth')
+            state['net'] = net.state_dict()
+            torch.save(state, args.outf + '/ckpt.pth')
             best_err = va_err
