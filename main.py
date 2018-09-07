@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use('Agg') # before importing matplotlib.pyplot or pylab!
 import matplotlib.pyplot as plt
 
+import numpy as np
 import argparse
 import pdb
 
@@ -25,6 +26,9 @@ parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--nepoch', default=350, type=int)
 parser.add_argument('--seed', default=1124, type=int)
 parser.add_argument('--batch_size', default=128, type=int)
+parser.add_argument('--depth', default=26, type=int)
+parser.add_argument('--width', default=1, type=int)
+parser.add_argument('--parallel', action='store_true')
 parser.add_argument('--outf', default='demo')
 parser.add_argument('--resume', default=None, help='path to checkpoint')
 args = parser.parse_args()
@@ -38,6 +42,7 @@ trset = torchvision.datasets.CIFAR10(root='/home/yu/datasets/',
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize(*NORM)]))
+# TODO: We don't want to do data augmentation on the validation set!
 trset, vaset = split_validation(trset, 5000, args.seed)
 trloader = torch.utils.data.DataLoader(trset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 valoader = torch.utils.data.DataLoader(vaset, batch_size=args.batch_size, shuffle=False, num_workers=2)
@@ -50,7 +55,9 @@ teloader = torch.utils.data.DataLoader(teset, batch_size=args.batch_size, shuffl
 
 print('==> Building model..')
 from models.preact_resnet import ResNetCifar
-net = ResNetCifar(110, 1)
+net = ResNetCifar(args.depth, args.width)
+if args.parallel:
+    net = torch.nn.DataParallel(net)
 net = net.cuda()
 nparams = print_nparams(net)
 cudnn.benchmark = True
@@ -66,7 +73,7 @@ if args.resume is not None:
     best_err = checkpoint['va_err']
     start_epoch = checkpoint['epoch']
 
-criterion = nn.CrossEntropyLoss()
+criterion = nn.CrossEntropyLoss().cuda()
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
 
 def train():
@@ -97,7 +104,7 @@ def test(dataloader):
     total = 0
     for batch_idx, (inputs, targets) in enumerate(dataloader):
         inputs, targets = inputs.cuda(), targets.cuda()
-        inputs, targets = Variable(inputs), Variable(targets)
+        inputs, targets = Variable(inputs, volatile=True), Variable(targets, volatile=True)
         outputs = net(inputs)
         loss = criterion(outputs, targets)
 
@@ -128,8 +135,8 @@ for epoch in range(start_epoch, start_epoch+args.nepoch):
           '%.2f\t%.3f\t' % (te_err*100, te_loss))
 
     y_tr, _, y_va, _, y_te, _ = zip(*all_loss)
-    plt.plot(y_te*100, label='test error (%)')
-    plt.plot(y_tr*100, label='training error (%)')
+    plt.plot(np.asarray(y_te)*100, label='test error (%)')
+    plt.plot(np.asarray(y_tr)*100, label='training error (%)')
     plt.legend()
     plt.savefig(         '%s/loss.pdf'          % (args.outf))
     plt.close()
